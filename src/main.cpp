@@ -1,103 +1,39 @@
-#ifdef ESP8266
-#include <ESP8266WiFi.h>
-#else
-#ifdef ESP32
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#endif // ESP32
-#endif // ESP8266
-
 #include <Arduino_MQTT_Client.h>
-#include <Preferences.h> // For ESP32 EEPROM emulation
+#include <Preferences.h>
 #include <Shared_Attribute_Update.h>
 #include <ThingsBoard.h>
+#include <WiFi.h>
 
-// Whether the given script is using encryption or not,
-// generally recommended as it increases security (communication with the server
-// is not in clear text anymore), it does come with an overhead tough as having
-// an encrypted session requires a lot of memory, which might not be avaialable
-// on lower end devices.
+#define LED 2 // Define the LED pin, change as needed
+
 #define ENCRYPTED false
 
 constexpr char WIFI_SSID[] = "TP-Link_60_502";
 constexpr char WIFI_PASSWORD[] = "isgm1234";
 
-// See https://thingsboard.io/docs/getting-started-guides/helloworld/
-// to understand how to obtain an access token
 constexpr char TOKEN[] = "vyT28nuMgr7DLU5W0SkH";
 
 // Thingsboard we want to establish a connection too
 constexpr char THINGSBOARD_SERVER[] = "thingsboard.cloud";
 
-// MQTT port used to communicate with the server, 1883 is the default
-// unencrypted MQTT port, whereas 8883 would be the default encrypted SSL MQTT
-// port
 #if ENCRYPTED
 constexpr uint16_t THINGSBOARD_PORT = 8883U;
 #else
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
 #endif
 
-// Maximum size packets will ever be sent or received by the underlying MQTT
-// client, if the size is to small messages might not be sent or received
-// messages will be discarded
 constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 128U;
 constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 128U;
 
-// Baud rate for the debugging serial connection
-// If the Serial output is mangled, ensure to change the monitor speed
-// accordingly to this variable
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
-// Maximum amount of attributs we can request or subscribe, has to be set both
-// in the ThingsBoard template list and Attribute_Request_Callback template list
-// and should be the same as the amount of variables in the passed array. If it
-// is less not all variables will be requested or subscribed
 constexpr size_t MAX_ATTRIBUTES = 6U;
-
-#if ENCRYPTED
-// See
-// https://comodosslstore.com/resources/what-is-a-root-ca-certificate-and-how-do-i-download-it/
-// on how to get the root certificate of the server we want to communicate with,
-// this is needed to establish a secure connection and changes depending on the
-// website.
-constexpr char ROOT_CERT[] = R"(-----BEGIN CERTIFICATE-----
-MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
-TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
-cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
-WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
-ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
-MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
-h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
-0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
-A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
-T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
-B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
-B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
-KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
-OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
-jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
-qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
-rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
-HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
-hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
-ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
-3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
-NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
-ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
-TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
-jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
-oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
-4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
-mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
-emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
------END CERTIFICATE-----
-)";
-#endif
 
 constexpr char CONNECTING_MSG[] = "Connecting to: (%s) with token (%s)\n";
 char constexpr WIFI_USERNAME_KEY[] = "wifi_username_key";
 char constexpr WIFI_PASSWORD_KEY[] = "wifi_password_key";
+constexpr char LED_BLINK_INTERVAL_KEY[] = "led_blink_interval";
+uint16_t blinkIntervalMs = 500; // default value
 
 // Initialize underlying client, used to establish a connection
 #if ENCRYPTED
@@ -119,8 +55,6 @@ ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE,
 // Statuses for subscribing to shared attributes
 bool subscribed = false;
 
-/// @brief Initalizes WiFi connection,
-// will endlessly delay until a connection has been successfully established
 void InitWiFi() {
   Serial.println("Connecting to AP ...");
   // Attempting to establish a connection to the given WiFi network
@@ -136,8 +70,6 @@ void InitWiFi() {
 #endif
 }
 
-/// @brief Reconnects the WiFi uses InitWiFi if the connection has been removed
-/// @return Returns true as soon as a connection has been established again
 bool reconnect() {
   // Check to ensure we aren't connected yet
   const wl_status_t status = WiFi.status();
@@ -150,56 +82,71 @@ bool reconnect() {
   return true;
 }
 
-/// @brief Update callback that will be called as soon as one of the provided
-/// shared attributes changes value, if none are provided we subscribe to any
-/// shared attribute change instead
-/// @param data Data containing the shared attributes that were changed and
-/// their current value
 void processSharedAttributeUpdate(const JsonObjectConst &data) {
-  preferences.begin("tb-config", false); // open for writing
+  preferences.begin("tb-config", false);
 
   for (auto it = data.begin(); it != data.end(); ++it) {
-    const char *key = it->key().c_str();
-    const char *value = it->value().as<const char *>();
-    Serial.println(key);
-    Serial.println(value);
+    String key = it->key().c_str();
 
-    if (strcmp(key, WIFI_USERNAME_KEY) == 0) {
-      preferences.putString("wifi_user", value);
-      Serial.println("Saved wifi_user to EEPROM");
-    } else if (strcmp(key, WIFI_PASSWORD_KEY) == 0) {
-      preferences.putString("wifi_pass", value);
-      Serial.println("Saved wifi_pass to EEPROM");
+    if (key == LED_BLINK_INTERVAL_KEY) {
+      // Ensure value is an integer
+      if (it->value().is<uint16_t>()) {
+        uint16_t newInterval = it->value().as<uint16_t>();
+        blinkIntervalMs = newInterval;
+        preferences.putUInt("blink_intv", newInterval); // Save to preferences
+        Serial.print("Updated and saved blink interval to: ");
+        Serial.println(newInterval);
+      } else {
+        Serial.println("Invalid type for LED blink interval. Must be integer.");
+      }
+    } else if (key == WIFI_USERNAME_KEY) {
+      preferences.putString("wifi_user", it->value().as<String>());
+      Serial.println("Saved wifi_user");
+    } else if (key == WIFI_PASSWORD_KEY) {
+      preferences.putString("wifi_pass", it->value().as<String>());
+      Serial.println("Saved wifi_pass");
     }
-
-    preferences.end(); // commit and close
   }
 
-  const size_t jsonSize = Helper::Measure_Json(data);
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  Serial.println(buffer);
+  preferences.end();
 }
 
 void setup() {
-  // Initalize serial connection for debugging
+  pinMode(LED, OUTPUT);
   Serial.begin(SERIAL_DEBUG_BAUD);
   delay(1000);
+
   preferences.begin("tb-config", true); // read-only
-  String savedUser = preferences.getString("wifi_user", "none");
-  String savedPass = preferences.getString("wifi_pass", "none");
+  String wifiUserName = preferences.getString("wifi_user", "none");
+  String wifiPass = preferences.getString("wifi_pass", "none");
+
+  // Load blinkInterval only if it was previously saved (non-zero)
+  uint16_t storedInterval = preferences.getUInt("blink_intv", 0);
+  Serial.print("storedInterval: ");
+  Serial.println(storedInterval);
+
+  if (storedInterval != 0) {
+    blinkIntervalMs = storedInterval;
+  } else {
+    blinkIntervalMs = 500;
+  }
+
   preferences.end();
 
   Serial.print("Stored WiFi Username: ");
-  Serial.println(savedUser);
+  Serial.println(wifiUserName);
   Serial.print("Stored WiFi Password: ");
-  Serial.println(savedPass);
+  Serial.println(wifiPass);
+  Serial.print("Using LED Blink Interval: ");
+  Serial.println(blinkIntervalMs);
+
   InitWiFi();
 }
 
-void loop() {
-  delay(1000);
+unsigned long lastBlink = 0;
+bool ledState = false;
 
+void loop() {
   if (!reconnect()) {
     return;
   }
@@ -218,7 +165,9 @@ void loop() {
     Serial.println("Subscribing for shared attribute updates...");
     // Shared attributes we want to request from the server
     constexpr std::array<const char *, MAX_ATTRIBUTES>
-        SUBSCRIBED_SHARED_ATTRIBUTES = {WIFI_USERNAME_KEY, WIFI_PASSWORD_KEY};
+        SUBSCRIBED_SHARED_ATTRIBUTES = {WIFI_USERNAME_KEY, WIFI_PASSWORD_KEY,
+                                        LED_BLINK_INTERVAL_KEY};
+
     const Shared_Attribute_Callback<MAX_ATTRIBUTES> callback(
         &processSharedAttributeUpdate, SUBSCRIBED_SHARED_ATTRIBUTES);
     if (!shared_update.Shared_Attributes_Subscribe(callback)) {
@@ -231,4 +180,9 @@ void loop() {
   }
 
   tb.loop();
+  if (millis() - lastBlink > blinkIntervalMs) {
+    lastBlink = millis();
+    ledState = !ledState;
+    digitalWrite(LED, ledState);
+  }
 }

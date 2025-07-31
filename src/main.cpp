@@ -1,39 +1,16 @@
+#include <Adafruit_Sensor.h>
 #include <Arduino_MQTT_Client.h>
-#include <Preferences.h>
+#include <DHT.h>
 #include <Shared_Attribute_Update.h>
+#include <TBShareAttributesSubscribe.h>
 #include <ThingsBoard.h>
 #include <WiFi.h>
-
-#define LED 2 // Define the LED pin, change as needed
+#include <variable.h>
+#include <wifiConnect.h>
 
 #define ENCRYPTED false
 
-constexpr char WIFI_SSID[] = "TP-Link_60_502";
-constexpr char WIFI_PASSWORD[] = "isgm1234";
-
-constexpr char TOKEN[] = "vyT28nuMgr7DLU5W0SkH";
-
-// Thingsboard we want to establish a connection too
-constexpr char THINGSBOARD_SERVER[] = "thingsboard.cloud";
-
-#if ENCRYPTED
-constexpr uint16_t THINGSBOARD_PORT = 8883U;
-#else
-constexpr uint16_t THINGSBOARD_PORT = 1883U;
-#endif
-
-constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 128U;
-constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 128U;
-
-constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
-
-constexpr size_t MAX_ATTRIBUTES = 6U;
-
-constexpr char CONNECTING_MSG[] = "Connecting to: (%s) with token (%s)\n";
-char constexpr WIFI_USERNAME_KEY[] = "wifi_username_key";
-char constexpr WIFI_PASSWORD_KEY[] = "wifi_password_key";
-constexpr char LED_BLINK_INTERVAL_KEY[] = "led_blink_interval";
-uint16_t blinkIntervalMs = 500; // default value
+DHT dht(DHTPIN, DHTTYPE);
 
 // Initialize underlying client, used to establish a connection
 #if ENCRYPTED
@@ -42,8 +19,11 @@ WiFiClientSecure espClient;
 WiFiClient espClient;
 #endif
 
+uint16_t blinkIntervalMs = 1000;  // default value in milliseconds
+uint16_t dht22IntervalMs = 60000; // default value in milliseconds
+
 Preferences preferences;
-// Initalize the Mqtt client instance
+//  Initalize the Mqtt client instance
 Arduino_MQTT_Client mqttClient(espClient);
 // Initialize used apis
 Shared_Attribute_Update<1U, MAX_ATTRIBUTES> shared_update;
@@ -55,98 +35,45 @@ ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE,
 // Statuses for subscribing to shared attributes
 bool subscribed = false;
 
-void InitWiFi() {
-  Serial.println("Connecting to AP ...");
-  // Attempting to establish a connection to the given WiFi network
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    // Delay 500ms until a connection has been successfully established
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("Connected to AP");
-#if ENCRYPTED
-  espClient.setCACert(ROOT_CERT);
-#endif
-}
-
-bool reconnect() {
-  // Check to ensure we aren't connected yet
-  const wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
-    return true;
-  }
-
-  // If we aren't establish a new connection to the given WiFi network
-  InitWiFi();
-  return true;
-}
-
-void processSharedAttributeUpdate(const JsonObjectConst &data) {
-  preferences.begin("tb-config", false);
-
-  for (auto it = data.begin(); it != data.end(); ++it) {
-    String key = it->key().c_str();
-
-    if (key == LED_BLINK_INTERVAL_KEY) {
-      // Ensure value is an integer
-      if (it->value().is<uint16_t>()) {
-        uint16_t newInterval = it->value().as<uint16_t>();
-        blinkIntervalMs = newInterval;
-        preferences.putUInt("blink_intv", newInterval); // Save to preferences
-        Serial.print("Updated and saved blink interval to: ");
-        Serial.println(newInterval);
-      } else {
-        Serial.println("Invalid type for LED blink interval. Must be integer.");
-      }
-    } else if (key == WIFI_USERNAME_KEY) {
-      preferences.putString("wifi_user", it->value().as<String>());
-      Serial.println("Saved wifi_user");
-    } else if (key == WIFI_PASSWORD_KEY) {
-      preferences.putString("wifi_pass", it->value().as<String>());
-      Serial.println("Saved wifi_pass");
-    }
-  }
-
-  preferences.end();
-}
-
 void setup() {
   pinMode(LED, OUTPUT);
+  dht.begin();
   Serial.begin(SERIAL_DEBUG_BAUD);
   delay(1000);
 
   preferences.begin("tb-config", true); // read-only
-  String wifiUserName = preferences.getString("wifi_user", "none");
-  String wifiPass = preferences.getString("wifi_pass", "none");
 
   // Load blinkInterval only if it was previously saved (non-zero)
-  uint16_t storedInterval = preferences.getUInt("blink_intv", 0);
-  Serial.print("storedInterval: ");
-  Serial.println(storedInterval);
+  uint16_t storedLEDInterval = preferences.getUInt("blink_intv", 0);
+  Serial.print("storedLEDInterval: ");
+  Serial.println(storedLEDInterval);
 
-  if (storedInterval != 0) {
-    blinkIntervalMs = storedInterval;
-  } else {
-    blinkIntervalMs = 500;
+  if (storedLEDInterval != 0) {
+    blinkIntervalMs = storedLEDInterval;
+  }
+
+  uint16_t storedDHT22Interval = preferences.getUInt("dht22_intv", 0);
+  Serial.print("storedDHT22Interval: ");
+  Serial.println(storedDHT22Interval);
+
+  if (storedDHT22Interval != 0) {
+    dht22IntervalMs = storedDHT22Interval;
   }
 
   preferences.end();
-
-  Serial.print("Stored WiFi Username: ");
-  Serial.println(wifiUserName);
-  Serial.print("Stored WiFi Password: ");
-  Serial.println(wifiPass);
   Serial.print("Using LED Blink Interval: ");
   Serial.println(blinkIntervalMs);
+  Serial.print("Using DHT22 Interval: ");
+  Serial.println(dht22IntervalMs);
 
   InitWiFi();
 }
 
-unsigned long lastBlink = 0;
+unsigned long lastBlink, lastDHT22Read = 0;
 bool ledState = false;
 
 void loop() {
+
   if (!reconnect()) {
     return;
   }
@@ -165,8 +92,8 @@ void loop() {
     Serial.println("Subscribing for shared attribute updates...");
     // Shared attributes we want to request from the server
     constexpr std::array<const char *, MAX_ATTRIBUTES>
-        SUBSCRIBED_SHARED_ATTRIBUTES = {WIFI_USERNAME_KEY, WIFI_PASSWORD_KEY,
-                                        LED_BLINK_INTERVAL_KEY};
+        SUBSCRIBED_SHARED_ATTRIBUTES = {LED_BLINK_INTERVAL_KEY,
+                                        DHT22_INTERVAL_KEY};
 
     const Shared_Attribute_Callback<MAX_ATTRIBUTES> callback(
         &processSharedAttributeUpdate, SUBSCRIBED_SHARED_ATTRIBUTES);
@@ -184,5 +111,12 @@ void loop() {
     lastBlink = millis();
     ledState = !ledState;
     digitalWrite(LED, ledState);
+  }
+  if (millis() - lastDHT22Read > dht22IntervalMs) {
+    lastDHT22Read = millis();
+    float humidity = dht.readHumidity();
+    float temperature = dht.readTemperature();
+    tb.sendTelemetryData("humidity", humidity);
+    tb.sendTelemetryData("temperature", temperature);
   }
 }

@@ -1,6 +1,10 @@
+#include "OLEDdisplay.h"
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <Adafruit_Sensor.h>
 #include <Arduino_MQTT_Client.h>
 #include <DHT.h>
+#include <Icons.h>
 #include <Shared_Attribute_Update.h>
 #include <TBShareAttributesSubscribe.h>
 #include <ThingsBoard.h>
@@ -11,6 +15,7 @@
 #define ENCRYPTED false
 
 DHT dht(DHTPIN, DHTTYPE);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Initialize underlying client, used to establish a connection
 #if ENCRYPTED
@@ -21,6 +26,8 @@ WiFiClient espClient;
 
 uint16_t blinkIntervalMs = 1000;  // default value in milliseconds
 uint16_t dht22IntervalMs = 60000; // default value in milliseconds
+uint16_t displayUpdateInterval =
+    20000; // 20 seconds for display update in milliseconds
 
 Preferences preferences;
 //  Initalize the Mqtt client instance
@@ -37,8 +44,17 @@ bool subscribed = false;
 
 void setup() {
   pinMode(LED, OUTPUT);
+  Wire.begin(OLED_SDA, OLED_SCL);
   dht.begin();
   Serial.begin(SERIAL_DEBUG_BAUD);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    while (true)
+      ;
+  }
+  display.clearDisplay();
+  display.display();
+  delay(1000);
   delay(1000);
 
   preferences.begin("tb-config", true); // read-only
@@ -73,6 +89,7 @@ unsigned long lastBlink, lastDHT22Read = 0;
 bool ledState = false;
 
 void loop() {
+  static unsigned long lastUpdate = 0;
 
   if (!reconnect()) {
     return;
@@ -116,7 +133,20 @@ void loop() {
     lastDHT22Read = millis();
     float humidity = dht.readHumidity();
     float temperature = dht.readTemperature();
-    tb.sendTelemetryData("humidity", humidity);
-    tb.sendTelemetryData("temperature", temperature);
+    tb.sendTelemetryData("humidity", roundf(humidity * 10) / 10.0);
+    tb.sendTelemetryData("temperature", roundf(temperature * 10) / 10.0);
+  }
+  if (millis() - lastUpdate >= displayUpdateInterval || lastUpdate == 0) {
+    lastUpdate = millis();
+
+    float temp = dht.readTemperature();
+    float hum = dht.readHumidity();
+
+    if (isnan(temp) || isnan(hum)) {
+      Serial.println(F("Failed to read from DHT sensor!"));
+      return;
+    }
+
+    displaySensorData(display, temp, hum);
   }
 }

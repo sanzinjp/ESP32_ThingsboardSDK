@@ -1,3 +1,4 @@
+// #include <Adafruit_SSD1306.h>
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -6,8 +7,18 @@
 #define DHTPIN 21     // GPIO pin connected to the DHT sensor
 #define DHTTYPE DHT22 // Type of DHT sensor used
 
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET -1    // Reset pin not used
+
+#define OLED_SDA 13 // I2C SDA pin for OLED display
+#define OLED_SCL 14 // I2C SCL pin for OLED display
+
 // Global variables (declared elsewhere and defined in one .cpp file)
 extern Preferences preferences; // NVS (EEPROM-like) storage handler
+
+// extern Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire,
+// OLED_RESET); // NVS (EEPROM-like) storage handler
 
 // WiFi credentials
 constexpr char WIFI_SSID[] = "TP-Link_60_502"; // Replace with your actual SSID

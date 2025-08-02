@@ -1,37 +1,70 @@
-#include <Arduino_MQTT_Client.h>
-#include <Server_Side_RPC.h>
-#include <ThingsBoard.h>
+#ifdef ESP8266
+#include <ESP8266WiFi.h>
+#else
+#ifdef ESP32
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#endif
+#endif
+
+#include <Arduino_MQTT_Client.h>
+#include <OTA_Firmware_Update.h>
+#include <ThingsBoard.h>
+
+#ifdef ESP8266
+#include <Arduino_ESP8266_Updater.h>
+#else
+#ifdef ESP32
+#include <Espressif_Updater.h>
+#endif
+#endif
+
+#define ENCRYPTED false
+
+constexpr char CURRENT_FIRMWARE_TITLE[] = "TEST";
+constexpr char CURRENT_FIRMWARE_VERSION[] = "1.0.0";
+constexpr uint8_t FIRMWARE_FAILURE_RETRIES = 12U;
+constexpr uint16_t FIRMWARE_PACKET_SIZE = 4096U;
 
 constexpr char WIFI_SSID[] = "TP-Link_60_502";
 constexpr char WIFI_PASSWORD[] = "isgm1234";
 constexpr char TOKEN[] = "vyT28nuMgr7DLU5W0SkH";
 constexpr char THINGSBOARD_SERVER[] = "thingsboard.cloud";
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
-constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 128U;
-constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 128U;
+
+constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 512U;
+constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 512U;
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
-// RPC method name
-constexpr const char RPC_SET_STATE[] = "setState";
-constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 1U;
-constexpr uint8_t MAX_RPC_RESPONSE = 5U;
+#if ENCRYPTED
+constexpr char ROOT_CERT[] = R"(-----BEGIN CERTIFICATE-----
+... (your certificate content here)
+-----END CERTIFICATE-----)";
+#endif
 
-// WiFi client and MQTT
+#if ENCRYPTED
+WiFiClientSecure espClient;
+#else
 WiFiClient espClient;
+#endif
+
 Arduino_MQTT_Client mqttClient(espClient);
-
-// Server-Side RPC
-Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
-const std::array<IAPI_Implementation *, 1U> apis = {&rpc};
-
-// ThingsBoard client
+OTA_Firmware_Update<> ota;
+const std::array<IAPI_Implementation *, 1U> apis = {&ota};
 ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE,
                Default_Max_Stack_Size, apis);
 
-bool subscribed = false;
+#ifdef ESP8266
+Arduino_ESP8266_Updater updater;
+#else
+#ifdef ESP32
+Espressif_Updater<> updater;
+#endif
+#endif
 
-// WiFi initialization
+bool currentFWSent = false;
+bool updateRequestSent = false;
+
 void InitWiFi() {
   Serial.println("Connecting to AP ...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -39,69 +72,75 @@ void InitWiFi() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConnected to AP");
+  Serial.println("Connected to AP");
+#if ENCRYPTED
+  espClient.setCACert(ROOT_CERT);
+#endif
 }
 
-// WiFi reconnect
 bool reconnect() {
-  if (WiFi.status() != WL_CONNECTED) {
-    InitWiFi();
-  }
-  return WiFi.status() == WL_CONNECTED;
+  if (WiFi.status() == WL_CONNECTED)
+    return true;
+  InitWiFi();
+  return true;
 }
 
-// === RPC callback implementation ===
-void processSetState(const JsonVariantConst &data, JsonDocument &response) {
-  Serial.println("Received RPC: setState");
+void update_starting_callback() {}
 
-  const char *command = data["command"];
-  if (command) {
-    Serial.print("Command: ");
-    Serial.println(command);
-
-    if (strcmp(command, "getCurrentData") == 0) {
-      response["temperature"] = 24.3;
-      response["humidity"] = 55;
-    } else {
-      response["error"] = "Unknown command";
-    }
+// Callback that will be called when the firmware update is finished
+void finished_callback(const bool &success) {
+  if (success) {
+    Serial.println("Done, Reboot now");
+#ifdef ESP8266
+    ESP.restart();
+#else
+#ifdef ESP32
+    esp_restart();
+#endif
+#endif
   } else {
-    response["error"] = "Missing 'command' parameter";
+    Serial.println("Downloading firmware failed");
   }
+}
+
+void progress_callback(const size_t &current, const size_t &total) {
+  Serial.printf("Progress %.2f%%\n",
+                static_cast<float>(current * 100U) / total);
 }
 
 void setup() {
   Serial.begin(SERIAL_DEBUG_BAUD);
   delay(1000);
-
   InitWiFi();
 }
 
 void loop() {
-  delay(100);
+  delay(1000);
 
   if (!reconnect())
     return;
 
   if (!tb.connected()) {
-    Serial.println("Connecting to ThingsBoard...");
+    Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER,
+                  TOKEN);
     if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
       Serial.println("Failed to connect");
       return;
     }
   }
 
-  if (!subscribed) {
-    Serial.println("Subscribing to RPC...");
-    const RPC_Callback callbacks[] = {{RPC_SET_STATE, processSetState}};
+  if (!currentFWSent) {
+    currentFWSent = ota.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE,
+                                           CURRENT_FIRMWARE_VERSION);
+  }
 
-    if (!rpc.RPC_Subscribe(std::begin(callbacks), std::end(callbacks))) {
-      Serial.println("Failed to subscribe to RPC");
-      return;
-    }
-
-    Serial.println("RPC subscribed");
-    subscribed = true;
+  if (!updateRequestSent) {
+    Serial.println("Firmware Update Subscription...");
+    const OTA_Update_Callback callback(
+        CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &updater,
+        &finished_callback, &progress_callback, &update_starting_callback,
+        FIRMWARE_FAILURE_RETRIES, FIRMWARE_PACKET_SIZE);
+    updateRequestSent = ota.Subscribe_Firmware_Update(callback);
   }
 
   tb.loop();

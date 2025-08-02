@@ -1,5 +1,3 @@
-
-// #include <Preferences.h>
 #include <Arduino_MQTT_Client.h>
 #include <Shared_Attribute_Update.h>
 #include <TBShareAttributesSubscribe.h>

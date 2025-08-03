@@ -1,4 +1,3 @@
-// #include <Adafruit_SSD1306.h>
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -22,10 +21,9 @@ extern Preferences preferences; // NVS (EEPROM-like) storage handler
 
 // Firmware information
 constexpr char CURRENT_FIRMWARE_TITLE[] = "ESP32-S3_Firmware";
-constexpr char CURRENT_FIRMWARE_VERSION[] = "1.0.0";
+constexpr char CURRENT_FIRMWARE_VERSION[] = "1.0.3";
 constexpr uint8_t FIRMWARE_FAILURE_RETRIES = 12U;
 constexpr uint16_t FIRMWARE_PACKET_SIZE = 4096U;
-
 
 // WiFi credentials
 constexpr char WIFI_SSID[] = "TP-Link_60_502"; // Replace with your actual SSID

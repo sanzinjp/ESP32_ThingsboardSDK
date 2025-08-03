@@ -1,4 +1,5 @@
 #include "OLEDdisplay.h"
+#include "sd_read_write.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_Sensor.h>
@@ -64,34 +65,17 @@ void handleBlink();
 void handleTelemetry();
 void handleDisplayUpdate();
 
-// firmware update section
-void update_starting_callback() { Serial.println("Update is starting..."); }
-
-// Callback that will be called when the firmware update is finished
-void finished_callback(const bool &success) {
-  if (success) {
-    Serial.println("Done, Reboot now");
-#ifdef ESP8266
-    ESP.restart();
-#else
-#ifdef ESP32
-    esp_restart();
-#endif
-#endif
-  } else {
-    Serial.println("Downloading firmware failed");
-  }
-}
-
-void progress_callback(const size_t &current, const size_t &total) {
-  Serial.printf("Progress %.2f%%\n",
-                static_cast<float>(current * 100U) / total);
-}
-// firmware update section
-
 // === SETUP ===
 void setup() {
   Serial.begin(SERIAL_DEBUG_BAUD);
+  SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD,
+                 SD_MMC_D0); // Set custom SD_MMC pins (before begin)
+  saveFirmwareVersion();     // Save the current firmware version at startup
+  String fwVersion = getSavedFirmwareVersion();
+  Serial.printf("Current Firmware Version: %s\n", fwVersion.c_str());
+
+  checkAndUpdateFromSD(); // Check and update firmware from SD card if available
+
   InitWiFi();
   pinMode(LED, OUTPUT);
   Wire.begin(OLED_SDA, OLED_SCL);
@@ -101,6 +85,15 @@ void setup() {
   setupMqtt();
   ensureMqttConnection();
   sendClientAttributes();
+
+  // Screen Setup Display
+  display.setCursor(10, 30);
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+  display.print(String("V") + fwVersion);
+  display.display();
+  delay(1000);
+  // Screen Setup Display
 
   preferences.begin("tb-config", true);
   uint16_t storedLEDInterval = preferences.getUInt("blink_intv", 0);
@@ -129,22 +122,6 @@ void loop() {
       return;
     }
   }
-
-  // // firmware update section
-  // if (!currentFWSent) {
-  //   currentFWSent = ota.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE,
-  //                                          CURRENT_FIRMWARE_VERSION);
-  // }
-
-  // if (!updateRequestSent) {
-  //   Serial.println("Firmware Update Subscription...");
-  //   const OTA_Update_Callback callback(
-  //       CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &updater,
-  //       &finished_callback, &progress_callback, &update_starting_callback,
-  //       FIRMWARE_FAILURE_RETRIES, FIRMWARE_PACKET_SIZE);
-  //   updateRequestSent = ota.Subscribe_Firmware_Update(callback);
-  // }
-  // // firmware update section
 
   if (!subscribed) {
     Serial.println("Subscribing for shared attribute updates and RPC...");

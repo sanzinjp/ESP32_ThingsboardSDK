@@ -17,5 +17,18 @@ In the `setup()` function, the firmware follows this process:
 
 ---
 
-## 🧭 Flowchart
+## 🧭 Flowchart (Mermaid)
+
+```mermaid
+flowchart TD
+    A[Start (setup function)] --> B[checkAndUpdateFromSD() <br> → Look for firmware.bin]
+    B --> C{firmware.bin found?}
+    C -- Yes --> D[Perform OTA update]
+    D --> E[Delete firmware.bin]
+    E --> F[Reboot device]
+    F --> G[checkAndUpdateFromSD() <br> → firmware.bin not found]
+    G --> H[Proceed with normal logic]
+
+    C -- No --> H
+
 

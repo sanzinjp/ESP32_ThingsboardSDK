@@ -15,20 +15,6 @@ In the `setup()` function, the firmware follows this process:
    - Upon reboot, `checkAndUpdateFromSD()` runs again.
    - This time, it does **not** find `firmware.bin`, so the device proceeds with normal operation (e.g., connecting to Wi-Fi, sending telemetry, subscribing to RPC, etc.).
 
----
 
-## 🧭 Flowchart (Mermaid)
-
-```mermaid
-flowchart TD
-    A[Start (setup function)] --> B[checkAndUpdateFromSD() <br> → Look for firmware.bin]
-    B --> C{firmware.bin found?}
-    C -- Yes --> D[Perform OTA update]
-    D --> E[Delete firmware.bin]
-    E --> F[Reboot device]
-    F --> G[checkAndUpdateFromSD() <br> → firmware.bin not found]
-    G --> H[Proceed with normal logic]
-
-    C -- No --> H
 
 

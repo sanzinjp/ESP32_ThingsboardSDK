@@ -20,35 +20,35 @@ In the setup() function, the firmware follows this process:
 
 🧭 Flowchart
 +----------------------------+
-| Start (setup function) |
+| Start (setup function)    |
 +----------------------------+
-|
-v
+            |
+            v
 +----------------------------+
-| checkAndUpdateFromSD() |
-| → Look for firmware.bin |
+| checkAndUpdateFromSD()    |
+| → Look for firmware.bin   |
 +----------------------------+
-|
-+------+------+
-| |
-v v
-[Found] [Not Found]
-| |
-v v
-Perform OTA Proceed with
-update normal logic
-|
-v
+            |
+     +------+------+
+     |             |
+     v             v
+[Found]        [Not Found]
+     |             |
+     v             v
+Perform OTA     Proceed with
+update          normal logic
+     |
+     v
 Delete firmware.bin
-|
-v
+     |
+     v
 Reboot device
-|
-v
+     |
+     v
 +----------------------------+
-| checkAndUpdateFromSD() |
-| → firmware.bin not found |
+| checkAndUpdateFromSD()    |
+| → firmware.bin not found  |
 +----------------------------+
-|
-v
+            |
+            v
 Proceed with normal logic
